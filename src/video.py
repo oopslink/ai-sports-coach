@@ -7,6 +7,10 @@ class FrameExtractionError(Exception):
     pass
 
 
+# Extract every Nth frame where N is the frame skip interval
+FALLBACK_FRAME_SKIP_INTERVAL = 10
+
+
 def extract_frames(video_path: Path, output_dir: Path, num_frames: int = 12) -> list[Path]:
     """Extract num_frames evenly spaced frames from video_path into output_dir."""
     if not video_path.exists():
@@ -36,8 +40,8 @@ def extract_frames(video_path: Path, output_dir: Path, num_frames: int = 12) -> 
         fps = num_frames / duration
         vf_filter = f"fps={fps:.6f}"
     else:
-        # Fallback: extract every Nth frame
-        vf_filter = f"select='not(mod(n\\,10))',setpts=N/FRAME_RATE/TB"
+        # Fallback: extract every Nth frame when duration cannot be determined
+        vf_filter = f"select='not(mod(n\\,{FALLBACK_FRAME_SKIP_INTERVAL}))',setpts=N/FRAME_RATE/TB"
 
     result = subprocess.run(
         ["ffmpeg", "-i", str(video_path), "-vf", vf_filter,
@@ -49,4 +53,10 @@ def extract_frames(video_path: Path, output_dir: Path, num_frames: int = 12) -> 
         raise FrameExtractionError(f"ffmpeg failed:\n{result.stderr}")
 
     frames = sorted(output_dir.glob("frame_*.jpg"))
+
+    # Validate frame count: allow more frames (ffmpeg sometimes extracts one extra),
+    # but raise error if fewer than expected frames were extracted
+    if len(frames) < num_frames:
+        raise FrameExtractionError(f"Expected {num_frames} frames but got {len(frames)}")
+
     return frames
