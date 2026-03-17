@@ -26,7 +26,7 @@ def fetch_reference_images(sport: str, output_dir: Path, max_images: int = 3) ->
         url = result.get("image", "")
         if not url:
             continue
-        dest = output_dir / f"ref_{i + 1:03d}.jpg"
+        dest = output_dir / f"ref_{len(downloaded) + 1:03d}.jpg"
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
