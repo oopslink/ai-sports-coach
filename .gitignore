@@ -1,5 +1,11 @@
 # Project-specific
 output/
+sample/
+*.MP4
+*.mp4
+*.mov
+*.avi
+*.mkv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
