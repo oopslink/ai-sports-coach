@@ -30,6 +30,14 @@ def fetch_reference_images(sport: str, output_dir: Path, max_images: int = 3) ->
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
+            MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+            content_type = resp.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                logger.warning("Skipping non-image response for %s: %s", url, content_type)
+                continue
+            if len(resp.content) > MAX_IMAGE_BYTES:
+                logger.warning("Skipping oversized image %s (%d bytes)", url, len(resp.content))
+                continue
             dest.write_bytes(resp.content)
             downloaded.append(dest)
         except Exception as e:

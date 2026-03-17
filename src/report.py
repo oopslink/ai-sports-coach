@@ -12,19 +12,20 @@ def generate_report(
     output_dir: Path,
 ) -> Path:
     """Assemble and save a Markdown coach analysis report."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
     report_path = output_dir / f"report_{timestamp}.md"
 
     lines: list[str] = []
 
     # Header
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = now.strftime("%Y-%m-%d")
     lines += [
         f"# Coach Analysis: {result.sport} — {date_str}",
         "",
         "## Background",
         "",
-        context,
+        "\n".join(f"> {line}" for line in context.splitlines()),
         "",
     ]
 

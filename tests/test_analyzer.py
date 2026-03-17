@@ -64,3 +64,20 @@ def test_raises_on_invalid_json_response(tmp_path, mocker):
 
     with pytest.raises(AnalyzerError, match="Failed to parse"):
         analyze_frames([frame], "context", api_key="sk-test")
+
+
+def test_handles_markdown_wrapped_json_response(tmp_path, mocker):
+    frame = tmp_path / "frame_001.jpg"
+    frame.write_bytes(b'\xff\xd8\xff\xd9')
+
+    mock_client = MagicMock()
+    # GPT-4o sometimes wraps JSON in markdown code fences
+    wrapped = f"```json\n{json.dumps(MOCK_RESPONSE)}\n```"
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=wrapped))]
+    )
+    mocker.patch("src.analyzer.openai.OpenAI", return_value=mock_client)
+
+    result = analyze_frames([frame], "context", api_key="sk-test")
+    assert result.sport == "tennis"
+    assert result.score == 7

@@ -86,9 +86,15 @@ def analyze_frames(frames: list[Path], context: str, api_key: Optional[str] = No
         else:
             raise AnalyzerError(f"Failed to parse API response as JSON:\n{raw}")
 
+    raw_score = data.get("score", 0)
+    try:
+        score = max(0, min(10, int(raw_score)))
+    except (ValueError, TypeError):
+        raise AnalyzerError(f"Invalid score value in API response: {raw_score!r}")
+
     return AnalysisResult(
         sport=data.get("sport", "unknown"),
-        score=int(data.get("score", 0)),
+        score=score,
         strengths=data.get("strengths", []),
         issues=data.get("issues", []),
         suggestions=data.get("suggestions", []),

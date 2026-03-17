@@ -44,10 +44,15 @@ def main() -> None:
     args = parser.parse_args()
 
     video_path = Path(args.video)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    if video_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+        print(f"Error: unsupported video format '{video_path.suffix}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}", file=sys.stderr)
+        sys.exit(1)
 
     context = get_context(args)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     frames_dir = output_dir / "frames"
     print(f"Extracting frames from {video_path}...")

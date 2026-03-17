@@ -1,6 +1,9 @@
+import logging
 import shutil
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class FrameExtractionError(Exception):
@@ -21,6 +24,9 @@ def extract_frames(video_path: Path, output_dir: Path, num_frames: int = 12) -> 
             "ffmpeg is not installed. Install it with: brew install ffmpeg (macOS) "
             "or apt install ffmpeg (Linux)"
         )
+
+    if shutil.which("ffprobe") is None:
+        logger.warning("ffprobe not found; will use fallback frame extraction strategy")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = str(output_dir / "frame_%03d.jpg")

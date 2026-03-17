@@ -10,7 +10,7 @@ def test_raises_if_video_not_found(tmp_path):
 
 
 def test_raises_if_ffmpeg_not_installed(tmp_path, mocker):
-    mocker.patch("shutil.which", return_value=None)
+    mocker.patch("src.video.shutil.which", return_value=None)
     fake_video = tmp_path / "video.mp4"
     fake_video.touch()
     with pytest.raises(FrameExtractionError, match="ffmpeg"):
@@ -18,7 +18,7 @@ def test_raises_if_ffmpeg_not_installed(tmp_path, mocker):
 
 
 def test_returns_12_frame_paths(tmp_path, mocker):
-    mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
+    mocker.patch("src.video.shutil.which", return_value="/usr/bin/ffmpeg")
     # Use a real path that exists (tmp_path itself) as the video to bypass the existence check
     fake_video = tmp_path / "video.mp4"
     fake_video.touch()
@@ -40,7 +40,7 @@ def test_returns_12_frame_paths(tmp_path, mocker):
 
 
 def test_uses_fallback_when_ffprobe_fails(tmp_path, mocker):
-    mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
+    mocker.patch("src.video.shutil.which", return_value="/usr/bin/ffmpeg")
     fake_video = tmp_path / "video.mp4"
     fake_video.touch()
     mock_run = mocker.patch("subprocess.run")
