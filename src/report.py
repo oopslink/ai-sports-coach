@@ -14,7 +14,7 @@ def generate_report(
     """Assemble and save a Markdown coach analysis report."""
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S")
-    report_path = output_dir / f"report_{timestamp}.md"
+    report_path = output_dir / f"coach_{timestamp}.md"
 
     lines: list[str] = []
 
