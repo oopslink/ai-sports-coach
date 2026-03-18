@@ -1,83 +1,174 @@
 ---
 name: flag-football-coach
-description: 腰旗橄榄球视频教练分析 skill。当用户提供或指定一个腰旗橄榄球视频（mp4/mov/avi 等）并希望获得教练点评、技术分析或改进建议时，立即使用此 skill。即使用户只说"帮我看看这个视频"、"分析一下我的跑位"、"我的传球有什么问题"，只要上下文与腰旗橄榄球相关，都应触发。
+description: 腰旗橄榄球视频教练分析 skill。当用户提供或指定一个腰旗橄榄球视频（mp4/mov/avi 等）并希望获得教练点评、技术分析或改进建议时，立即使用此 skill。即使用户只说"帮我看看这个视频"、"分析一下我的跑位"、"我的传球有什么问题"、"防守复盘"，只要上下文与腰旗橄榄球相关，都应触发。
 ---
 
 # 腰旗橄榄球视频教练分析
 
-你是一名专业腰旗橄榄球教练助手。用户提供了一段视频，你的任务是调用 `coach.py` 进行 GPT-4o Vision 分析，并输出一份中文 Markdown 教练报告（含关键帧配图）。
+## 分析模式选择
 
-## 第一步：收集信息
+根据用户需求选择合适的分析模式：
 
-如果用户还没有提供以下信息，依次询问（不要一次问完，按顺序逐条确认）：
+| 模式 | 触发场景 | 使用工具 |
+|------|---------|---------|
+| **综合教练分析** | 全面分析 / 进攻技术 / 团队战术 | `coach.py` |
+| **防守专项复盘** | 防守教练视角 / 复盘拔旗/漏人/换防 | `defense_annotate.py` |
+| **输出 PPT** | 用户要求幻灯片 | `gen_defense_ppt.js` |
+| **输出 PDF** | 用户要求 PDF 报告 | `gen_defense_pdf.py` |
 
-**1. 视频文件路径**（如果未提供）
-> 请提供视频文件的路径，例如：`~/Videos/game_clip.mp4`
+---
 
-**2. 分析重点**（展示菜单，让用户选择 1 项或多项）
+## 模式一：综合教练分析（coach.py）
 
-> 请选择你想重点分析的方向（可多选，输入编号）：
->
-> 1. 跑位技术 — 路线精准度、启动时机、变向节奏
-> 2. 传球姿势 — QB 握球、步法、出手点、肩膀旋转
-> 3. 接球技术 — 手型、身体对位、脚步落点、抗干扰
-> 4. 拔旗防守 — 预判位置、脚步接近、出手时机
-> 5. 持球跑动 — 护旗意识、变向能力、破防节奏
-> 6. 整体战术 — 阵型配合、时机选择、团队协调
-> 7. 综合评估 — 以上全部
+### 第一步：收集信息
 
-**3. 运动员背景**（选填，但提供后分析更精准）
-> 请简要描述运动员情况，例如：
-> - 经验水平（初学者 / 进阶 / 比赛级）
-> - 场上位置（QB / 接球手 / 跑卫 / 角卫等）
-> - 主要目标（备战比赛 / 改善弱点 / 提升某项技术）
+依次确认（不要一次问完）：
 
-## 第二步：构建分析指令
+**1. 视频文件路径**（未提供时询问）
 
-根据用户输入，组装 `--context` 字符串。context 必须：
-- **使用中文**，确保 GPT-4o 用中文回复
-- 明确说明运动项目是腰旗橄榄球
-- 包含选择的分析重点
-- 包含运动员背景（如有）
+**2. 分析重点**（展示菜单）：
+1. 跑位技术 — 路线精准度、启动时机、变向节奏
+2. 传球姿势 — QB 握球、步法、出手点、肩膀旋转
+3. 接球技术 — 手型、身体对位、脚步落点、抗干扰
+4. 拔旗防守 — 预判位置、脚步接近、出手时机
+5. 持球跑动 — 护旗意识、变向能力、破防节奏
+6. 整体战术 — 阵型配合、时机选择、团队协调
+7. 综合评估 — 以上全部
 
-示例 context（根据实际内容替换）：
-```
-这是一段腰旗橄榄球训练/比赛视频。请全程用中文进行专业教练分析。
-重点分析方向：跑位技术、接球技术。
-运动员情况：进阶水平，场上位置为接球手，目标是备战城市联赛。
-请从以下维度给出详细点评：动作优点、存在问题（注明出现在哪帧）、具体改进建议。
-```
+**3. 运动员背景**（选填）：经验水平、场上位置、主要目标
 
-## 第三步：调用 coach.py
-
-在 ai-sports-coach 项目目录下运行：
+### 第二步：调用 coach.py
 
 ```bash
 cd /Users/oopslink/works/codes/oopslink/ai-sports-coach
-python3 coach.py --video "<视频路径>" --context "<构建好的 context>"
+python3 coach.py --video "<视频路径>" --context "<中文 context>"
 ```
 
-> **注意**：macOS 默认使用 `python3`，不是 `python`。如果遇到 `command not found: python` 错误，请确认使用 `python3`。
+context 模板：
+```
+这是一段腰旗橄榄球训练/比赛视频。请全程用中文进行专业教练分析。
+重点分析方向：[用户选择]。运动员情况：[背景]。
+请从以下维度给出详细点评：动作优点、存在问题（注明出现在哪帧）、具体改进建议。
+```
 
-- `output/` 目录会自动生成，无需手动创建
-- 报告保存在 `output/report_YYYYMMDD_HHMMSS.md`
-- 关键帧图片在 `output/frames/`，参考图片在 `output/references/`
+输出：`output/report_YYYYMMDD_HHMMSS.md`，帧在 `output/frames/`
 
-## 第四步：呈现报告
+---
+
+## 模式二：防守专项复盘（defense_annotate.py）
+
+### 防守教练复盘框架
+
+复盘时从三个维度分析：
+
+**个人技术**：
+- 拔旗：出手时机（提前/滞后）、角度（冲旗/拍旗）、是否被假动作骗过
+- 脚步：启动第一步方向、侧移（交叉步 vs 碎步）、追防角度（截断点 vs 身后追）
+- 覆盖：1v1 被过路线、有无提前读球
+
+**团队防守**：
+- 阵型：开球站位、进攻阵型出现后是否调整
+- 换防：交叉跑位时有无喊话换防、有无漏人
+- 预判：球传出前有无移动、是否识别对方套路
+
+**帧级溯源**：对每个失误注明帧号、第一个失位球员、失误类型、修正动作
+
+### 调用 defense_annotate.py
+
+```bash
+cd /Users/oopslink/works/codes/oopslink/ai-sports-coach
+python3 defense_annotate.py
+```
+
+脚本自动读取 `output/frames/`（需先运行 coach.py 提取帧），输出：
+- `output/annotated/frame_*.jpg` — 带球员编号标注的图片
+- `output/defense_report_YYYYMMDD_HHMMSS.md` — 逐球员分析报告
+
+### 标注规则
+- 防守球员：红圈 + `D1/D2...`（按屏幕左→右排序）
+- 进攻球员：蓝圈 + `O1/O2...`
+- 问题球员：额外黄色警告外圈
+- 问题标签（**英文**）：`MISS FLAG` / `FALSE STEP` / `HIGH CENTER` / `LOST MAN` / `NO SWITCH` / `GOOD POS`
+- 问题说明（**英文**）：显示在圆圈下方
+
+### ⚠️ GPT-4o 调用注意事项
+- **必须用英文 system prompt**（中文 prompt 会触发拒绝）
+- **不能说"识别球员"**，要说"spatial/movement analysis"、"position as fractions of image"
+- **detail=low**（12 帧 detail=high 会触发内容过滤）
+- system prompt 开头声明是"Flag Football training footage for technique improvement"
+
+---
+
+## 模式三：生成 PPT
+
+```bash
+cd /Users/oopslink/works/codes/oopslink/ai-sports-coach
+node output/gen_defense_ppt.js
+```
+
+输出：`output/defense_report.pptx`
+
+⚠️ **pptxgenjs 必须用全局路径**（`node` 默认找不到全局模块）：
+```javascript
+const pptxgen = require("/opt/homebrew/lib/node_modules/pptxgenjs");
+```
+
+PPT 结构（14 页）：封面 → 综合评分 → 球员图例 → 6 组逐帧标注 → D1/D2 个人分析 → 团队分析 → 训练计划 → 总结
+
+---
+
+## 模式四：生成 PDF
+
+```bash
+cd /Users/oopslink/works/codes/oopslink/ai-sports-coach
+python3 output/gen_defense_pdf.py
+```
+
+输出：`output/defense_report.pdf`（使用 `reportlab`）
+
+中文字体注册：
+```python
+pdfmetrics.registerFont(TTFont("CNFont", "/System/Library/Fonts/PingFang.ttc"))
+```
+
+⚠️ `ParagraphStyle` 不能在构造时同时用 `fontName=CN_FONT` 作为位置参数和关键字参数，会冲突：
+```python
+# ❌ 错误
+ParagraphStyle(name, fontName=CN_FONT, fontName=CN_FONT)
+# ✅ 正确：只在 P() 封装函数里设一次
+def P(name, **kw):
+    s[name] = ParagraphStyle(name, fontName=CN_FONT, **kw)
+P("h1", fontSize=16)  # 不要在 kw 里再传 fontName
+```
+
+---
+
+## 报告呈现
 
 分析完成后：
-1. 告知用户报告路径
-2. 将报告内容直接显示在对话中（Markdown 渲染）
-3. 如果报告中的图片路径是相对路径，提醒用户在 `output/` 目录下查看
+1. 告知用户报告/文件路径
+2. 将 Markdown 报告内容直接显示在对话中
+3. 标注图片路径提示：在 `output/annotated/` 目录下查看
 
-如果 coach.py 报错，根据错误类型给出对应提示：
-- `Video file not found` → 请用户确认视频路径是否正确
-- `ffmpeg is not installed` → 提示安装：`brew install ffmpeg`
-- `OPENAI_API_KEY is not set` → 提示在项目目录创建 `.env` 文件并填入 API Key
-- `unsupported video format` → 提示支持的格式：.mp4 .mov .avi .mkv .webm
+---
+
+## 错误处理
+
+| 错误 | 解决方案 |
+|------|---------|
+| `Video file not found` | 确认视频路径 |
+| `ffmpeg is not installed` | `brew install ffmpeg` |
+| `OPENAI_API_KEY is not set` | 项目目录创建 `.env` 填入 Key |
+| `unsupported video format` | 支持：.mp4 .mov .avi .mkv .webm |
+| GPT-4o 返回"无法分析图片" | 检查 system prompt 是否为英文且无"识别/identify person"字样 |
+| `Cannot find module 'pptxgenjs'` | 用全局绝对路径 require |
+| `multiple values for fontName` | 见 PDF 注意事项，不要重复传 fontName |
+
+---
 
 ## 注意事项
 
-- 视频建议时长 10–120 秒，过长会截取 12 帧分析，精度下降
-- 分析质量与 context 描述的详细程度正相关，引导用户提供更多背景
-- 如果用户提供了多段视频，每段单独运行一次 coach.py，分别生成报告
+- 视频建议 10–120 秒，超长视频截取 12 帧，精度下降
+- 多段视频每段单独运行 coach.py，分别生成帧和报告
+- `defense_annotate.py` 依赖已有的 `output/frames/`，必须先跑 coach.py
+- 标注文字统一用**英文**，PIL 默认字体不支持中文，强制英文可避免乱码
