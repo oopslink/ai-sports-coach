@@ -21,9 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 load_dotenv()
 
 # ── 路径配置 ─────────────────────────────────────────────────────────────────
-FRAMES_DIR   = Path("output/frames")
-ANNOTATED_DIR = Path("output/annotated")
-REPORT_PATH  = Path(f"output/defense_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+FRAMES_DIR   = Path("output/defense/frames")
+ANNOTATED_DIR = Path("output/defense/annotated")
+REPORT_PATH  = Path(f"output/defense/annotate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
 
 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
 
