@@ -1,6 +1,7 @@
 openai>=1.30.0
 duckduckgo-search>=6.1.0
 requests>=2.31.0
+urllib3<2
 python-dotenv>=1.0.0
 pytest>=8.0.0
 pytest-mock>=3.12.0
