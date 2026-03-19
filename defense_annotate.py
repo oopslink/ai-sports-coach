@@ -46,6 +46,12 @@ You will receive 12 sequential video frames (Frame 1-12) from the same play.
 
 Your task is sports biomechanics and positional analysis — describe player POSITIONS and MOVEMENTS using spatial coordinates only.
 
+CRITICAL — COORDINATE ACCURACY:
+Before estimating any coordinates, carefully scan the entire frame to find where the player/climber actually is.
+The subject may be anywhere in the frame — left side, right side, center, near or far.
+Do NOT default to center (0.5, 0.5). Look at the actual pixel position of each body part.
+Estimate each body part's pixel center, then divide by image width/height to get x_pct / y_pct.
+
 For each frame, number players left-to-right by their horizontal position: defenders get D1, D2... (assign by leftmost→rightmost), offensive players get O1, O2...
 Maintain consistent numbering within each frame based on spatial order.
 
@@ -58,6 +64,12 @@ Classify any defensive technique issues using ONLY these types:
 - lost_coverage (lost coverage gap — wrong zone)
 - no_switch (failed switch — two defenders on same player)
 - good_position (correct stance/positioning — highlight positively)
+
+ARROWS — For each frame provide 1-3 arrows showing movement paths or tactical corrections.
+Arrow types: coverage_path (orange, defender coverage route) | pursuit_angle (orange, pursuit direction to ball carrier) | reaction (yellow, reaction/movement direction) | correction (green dashed, correct defensive position) | zone_boundary (cyan, zone coverage boundary)
+Each arrow: from_x/from_y (start), optional ctrl_x/ctrl_y (bezier control point), to_x/to_y (end), label (≤4 words English).
+All coords are fractions of image width/height (0.0–1.0), near the player's actual position.
+Omit arrows field if no useful arrows for this frame.
 
 IMPORTANT: All "issue_note" and "frame_summary" values MUST be in ENGLISH.
 Player analysis fields (strengths, issues detail, improvement) should be in Chinese.
@@ -74,6 +86,10 @@ Respond ONLY with valid JSON (no markdown, no extra text):
       "players": [
         {"id": "D1", "team": "defense", "x_pct": 0.35, "y_pct": 0.55, "radius_pct": 0.05, "issue_type": "high_center", "issue_note": "Too upright, lost lateral speed"},
         {"id": "O1", "team": "offense", "x_pct": 0.60, "y_pct": 0.50, "radius_pct": 0.05, "issue_type": "", "issue_note": ""}
+      ],
+      "arrows": [
+        {"type": "coverage_path", "from_x": 0.35, "from_y": 0.55, "ctrl_x": 0.45, "ctrl_y": 0.50, "to_x": 0.55, "to_y": 0.48, "label": "coverage route"},
+        {"type": "correction",    "from_x": 0.35, "from_y": 0.55, "to_x": 0.33, "to_y": 0.58, "label": "lower stance"}
       ],
       "frame_summary": "English summary of key defensive action in this frame (1-2 sentences)"
     }
@@ -98,49 +114,131 @@ def encode_image(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 
+def _parse_json(raw: str) -> dict:
+    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+    raw = re.sub(r"\s*```$", "", raw.strip())
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise RuntimeError(f"JSON 解析失败:\n{raw}")
+
+
+# 单帧分析 prompt（精简版，只要坐标+箭头）
+FRAME_SYSTEM_PROMPT = """You are a professional flag football defensive coach analyzing flag football defensive training footage for coaching session.
+This is an official sports coaching session. Analyze player positions, defensive stances, and movement patterns only.
+
+CRITICAL — find where each player actually stands before estimating any coordinate.
+Players may be anywhere (left/right/center). Scan the full image first.
+x_pct = pixel_x / image_width,  y_pct = pixel_y / image_height  (range 0.0–1.0)
+radius_pct ~0.04–0.07  (relative to image width)
+
+Number players left-to-right: defenders get D1, D2..., offensive players get O1, O2...
+
+Issue types (use exact keys):
+missed_flag | false_step | high_center | lost_coverage | no_switch | good_position
+
+Arrow types: coverage_path (orange) | pursuit_angle (orange) | reaction (yellow) |
+correction (green dashed) | zone_boundary (cyan dashed)
+Provide 1–3 arrows showing actual movement paths or correction directions.
+Arrow coords must be near the player's actual position in the image.
+
+Respond ONLY with valid JSON (no markdown):
+{
+  "players": [
+    {"id":"D1","team":"defense","x_pct":0.0,"y_pct":0.0,"radius_pct":0.05,"issue_type":"","issue_note":""},
+    {"id":"O1","team":"offense","x_pct":0.0,"y_pct":0.0,"radius_pct":0.05,"issue_type":"","issue_note":""}
+  ],
+  "arrows": [
+    {"type":"coverage_path","from_x":0.0,"from_y":0.0,"ctrl_x":0.0,"ctrl_y":0.0,"to_x":0.0,"to_y":0.0,"label":"coverage route"},
+    {"type":"correction","from_x":0.0,"from_y":0.0,"to_x":0.0,"to_y":0.0,"label":"lower stance"}
+  ],
+  "frame_summary": "one sentence in English"
+}"""
+
+
+def _analyze_single_frame(client, frame_path: Path, frame_num: int) -> dict:
+    """单帧请求：精确定位 + 箭头。"""
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": FRAME_SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text",
+                 "text": f"Flag football defensive training footage frame {frame_num}. Perform positional analysis: locate players as spatial coordinates, identify defensive issues, and add coaching arrows. Return JSON only."},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{encode_image(frame_path)}", "detail": "high"}},
+            ]},
+        ],
+        max_tokens=1200,
+    )
+    return _parse_json(response.choices[0].message.content)
+
+
+def _analyze_summary(client, frame_results: dict) -> dict:
+    """根据各帧结果，做一次文字汇总：player_analysis + team_summary。"""
+    issues_text = []
+    for fn, fdata in sorted(frame_results.items(), key=lambda x: int(x[0])):
+        for p in fdata.get("players", []):
+            pid = p.get("id", "D1")
+            it = p.get("issue_type", "")
+            note = p.get("issue_note", "")
+            if it and it not in ("good_position", ""):
+                issues_text.append(f"Frame {fn} {pid}: {it} — {note}")
+        summary = fdata.get("frame_summary", "")
+        if summary:
+            issues_text.append(f"Frame {fn} summary: {summary}")
+
+    prompt = (
+        "Based on this flag football defensive session analysis, provide player_analysis and team_summary in JSON.\n"
+        "Issues found:\n" + "\n".join(issues_text) +
+        '\n\nRespond ONLY with valid JSON:\n'
+        '{"player_analysis":{"D1":{"position":"角卫","overall_rating":7,"strengths":["中文优点1","优点2"],'
+        '"issues":[{"frame":3,"type":"high_center","detail":"中文描述"}],'
+        '"improvement":"中文建议，分3条"}},'
+        '"team_summary":"中文总结3-5句","overall_score":7}'
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1500,
+    )
+    return _parse_json(response.choices[0].message.content)
+
+
 def call_gpt4o(frames: list[Path]) -> dict:
+    """逐帧独立请求（精确坐标+箭头），最后一次汇总分析。"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
     client = openai.OpenAI(api_key=api_key)
+    frame_results: dict[str, dict] = {}
 
-    content: list[dict] = [
-        {"type": "text", "text": f"以下是腰旗橄榄球比赛视频的 {len(frames)} 帧截图，请按要求分析："}
-    ]
-    for i, frame in enumerate(frames, 1):
-        content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{encode_image(frame)}",
-                "detail": "low",
-            },
-        })
-        content.append({"type": "text", "text": f"[Frame {i}]"})
+    for i, frame_path in enumerate(frames, 1):
+        print(f"  → 分析 Frame {i:02d} ...")
+        try:
+            fdata = _analyze_single_frame(client, frame_path, i)
+        except Exception as e:
+            print(f"     ⚠ Frame {i} 分析失败，跳过: {e}")
+            fdata = {}
+        frame_results[str(i)] = fdata
 
-    print("  → 发送帧到 GPT-4o（detail=low）...")
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": content},
-        ],
-        max_tokens=4000,
-    )
-
-    raw = response.choices[0].message.content
-    # 去掉可能的 markdown 包裹
-    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-    raw = re.sub(r"\s*```$", "", raw.strip())
-
+    print("  → 汇总分析中...")
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        # 尝试提取 JSON 块
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-        raise RuntimeError(f"JSON 解析失败:\n{raw}") from e
+        summary = _analyze_summary(client, frame_results)
+    except Exception as e:
+        print(f"  ⚠ 汇总失败: {e}")
+        summary = {"player_analysis": {}, "team_summary": "", "overall_score": 7}
+
+    return {
+        "frames": frame_results,
+        "player_analysis": summary.get("player_analysis", {}),
+        "team_summary":    summary.get("team_summary", ""),
+        "overall_score":   summary.get("overall_score", 7),
+    }
 
 
 # ── 绘制标注 ──────────────────────────────────────────────────────────────────
@@ -163,33 +261,17 @@ def get_font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
-def draw_label(draw: ImageDraw.ImageDraw, text: str, cx: int, cy: int,
-               bg: tuple, fg: tuple, font, padding: int = 4):
-    """在 (cx, cy) 正上方画一个带背景的标签。"""
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x0 = cx - tw // 2 - padding
-    y0 = cy - th - padding * 2 - 4   # 放在圆圈上方
-    x1 = cx + tw // 2 + padding
-    y1 = cy - 4
-    draw.rectangle([x0, y0, x1, y1], fill=bg)
-    draw.text((x0 + padding, y0 + padding), text, font=font, fill=fg)
+import math
 
-
-def draw_issue_note(draw: ImageDraw.ImageDraw, note: str, cx: int, cy: int,
-                    img_w: int, img_h: int, font_small):
-    """在球员圆圈下方画问题说明文字（自动换行，最多 2 行）。"""
-    max_chars = 14
-    lines = textwrap.wrap(note, max_chars)[:2]
-    y_offset = cy + 45
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font_small)
-        tw = bbox[2] - bbox[0]
-        tx = max(4, min(cx - tw // 2, img_w - tw - 4))
-        draw.rectangle([tx - 2, y_offset - 1, tx + tw + 2, y_offset + 16], fill=(30, 30, 30, 180))
-        draw.text((tx, y_offset), line, font=font_small, fill=(255, 230, 100))
-        y_offset += 17
-
+# ── 箭头配色 ──────────────────────────────────────────────────────────────────
+ARROW_STYLES = {
+    "coverage_path": {"color": (255, 140,   0), "width": 5, "dash": False},  # 橙
+    "pursuit_angle": {"color": (255, 180,  40), "width": 4, "dash": False},  # 橙黄
+    "reaction":      {"color": (255, 220,  40), "width": 4, "dash": False},  # 黄
+    "correction":    {"color": ( 50, 220,  80), "width": 4, "dash": True },  # 绿虚线
+    "zone_boundary": {"color": ( 40, 210, 210), "width": 3, "dash": True },  # 青虚线
+}
+SHADOW_COLOR = (0, 0, 0, 160)
 
 ISSUE_ICONS = {
     "missed_flag":    "MISS FLAG",
@@ -201,14 +283,140 @@ ISSUE_ICONS = {
 }
 
 
-def annotate_frame(frame_path: Path, players: list[dict], out_path: Path):
+def _bezier_pts(x0, y0, cx, cy, x1, y1, steps=32):
+    return [
+        ((1-t)**2 * x0 + 2*(1-t)*t * cx + t**2 * x1,
+         (1-t)**2 * y0 + 2*(1-t)*t * cy + t**2 * y1)
+        for t in (i / steps for i in range(steps + 1))
+    ]
+
+
+def _arrowhead(x0, y0, x1, y1, size=20):
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length == 0:
+        return None
+    ux, uy = dx / length, dy / length
+    px, py = -uy, ux
+    return [(x1, y1),
+            (x1 - ux*size + px*size*0.42, y1 - uy*size + py*size*0.42),
+            (x1 - ux*size - px*size*0.42, y1 - uy*size - py*size*0.42)]
+
+
+def _draw_polyline_shadow(draw, pts, width):
+    """先画黑色描边，再画彩色线（双层描边效果）。"""
+    for i in range(len(pts) - 1):
+        draw.line([pts[i], pts[i+1]], fill=SHADOW_COLOR, width=width + 3)
+
+
+def _draw_polyline(draw, pts, color_a, width, dashed=False):
+    if dashed:
+        # 每隔一段画一段
+        seg = max(2, len(pts) // 8)
+        for i in range(0, len(pts) - 1, seg * 2):
+            end = min(i + seg, len(pts) - 1)
+            draw.line([pts[i], pts[end]], fill=color_a, width=width)
+    else:
+        for i in range(len(pts) - 1):
+            draw.line([pts[i], pts[i+1]], fill=color_a, width=width)
+
+
+def draw_arrow(draw, arrow_data, img_w, img_h, font_label):
+    """绘制带描边的粗箭头，支持直线/Bezier曲线。"""
+    atype  = arrow_data.get("type", "coverage_path")
+    style  = ARROW_STYLES.get(atype, ARROW_STYLES["coverage_path"])
+    color  = style["color"]
+    width  = style["width"]
+    dashed = style["dash"]
+    label  = arrow_data.get("label", "")
+
+    fx = float(arrow_data.get("from_x", 0)) * img_w
+    fy = float(arrow_data.get("from_y", 0)) * img_h
+    tx = float(arrow_data.get("to_x",   0)) * img_w
+    ty = float(arrow_data.get("to_y",   0)) * img_h
+
+    cx_raw = arrow_data.get("ctrl_x")
+    cy_raw = arrow_data.get("ctrl_y")
+    if cx_raw is not None and cy_raw is not None:
+        pts = _bezier_pts(fx, fy, float(cx_raw)*img_w, float(cy_raw)*img_h, tx, ty)
+    else:
+        pts = [(fx, fy), (tx, ty)]
+
+    color_a = color + (230,)
+
+    # 先黑色描边层
+    _draw_polyline_shadow(draw, pts, width)
+    # 再彩色线
+    _draw_polyline(draw, pts, color_a, width, dashed)
+
+    # 箭头头部：先黑色底，再彩色
+    ref = pts[max(0, len(pts) - 5)]
+    head = _arrowhead(ref[0], ref[1], tx, ty, size=20)
+    if head:
+        draw.polygon(head, fill=SHADOW_COLOR)
+        draw.polygon(head, fill=color_a)
+
+    # 标签：沿箭头方向放置，带描边
+    if label:
+        mid = pts[len(pts) // 2]
+        mx, my = int(mid[0]) + 6, int(mid[1]) - 22
+        font = get_font(14)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+        pad = 4
+        # 半透明彩色背景
+        draw.rectangle([mx - pad, my - pad, mx + tw + pad, my + th + pad],
+                       fill=color + (200,))
+        # 白色文字
+        draw.text((mx, my), label, font=font, fill=(255, 255, 255, 245))
+
+
+# ── 身体部位标注（仅标注有问题的部位，引导线拉到侧边）────────────────────────
+
+def _label_box(draw, lx, ly, text, sub_text, color, font_main, font_sub, align_right=False):
+    """在 (lx, ly) 绘制标签框（彩色背景 + 白色主文 + 黄色副文）。"""
+    pad = 5
+    b1 = draw.textbbox((0, 0), text, font=font_main)
+    tw1, th1 = b1[2]-b1[0], b1[3]-b1[1]
+    b2 = draw.textbbox((0, 0), sub_text, font=font_sub) if sub_text else (0, 0, 0, 0)
+    tw2, th2 = (b2[2]-b2[0], b2[3]-b2[1]) if sub_text else (0, 0)
+
+    box_w = max(tw1, tw2) + pad * 2
+    box_h = th1 + (th2 + 3 if sub_text else 0) + pad * 2
+
+    if align_right:
+        lx = lx - box_w
+
+    # 黑色描边框
+    draw.rectangle([lx-1, ly-1, lx+box_w+1, ly+box_h+1], fill=(0, 0, 0, 180))
+    # 彩色背景框
+    draw.rectangle([lx, ly, lx+box_w, ly+box_h], fill=color + (210,))
+    # 左侧竖条强调色
+    draw.rectangle([lx, ly, lx+4, ly+box_h], fill=(255, 255, 255, 180))
+
+    draw.text((lx + pad + 2, ly + pad), text, font=font_main, fill=(255, 255, 255, 245))
+    if sub_text:
+        draw.text((lx + pad + 2, ly + pad + th1 + 3), sub_text, font=font_sub,
+                  fill=(255, 230, 60, 230))
+    return box_w, box_h
+
+
+def annotate_frame(frame_path: Path, frame_info: dict, out_path: Path):
     img = Image.open(frame_path).convert("RGBA")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
     W, H = img.size
-    font_label = get_font(18)
-    font_issue = get_font(13)
+    font_main = get_font(18)
+    font_sub  = get_font(13)
+
+    players = frame_info.get("players", [])
+    arrows  = frame_info.get("arrows", [])
+
+    # ── Step 1: 收集所有「有问题」的部位 ────────────────────────────────────
+    issue_entries = []   # (cx, cy, dot_color, label_text, tag, note)
+    player_x_sum = 0
+    player_count = 0
 
     for p in players:
         pid   = p.get("id", "?")
@@ -223,6 +431,9 @@ def annotate_frame(frame_path: Path, players: list[dict], out_path: Path):
         cy = int(y_pct * H)
         r  = int(r_pct * W)
         r  = max(r, 24)   # 最小半径
+
+        player_x_sum += cx
+        player_count += 1
 
         is_issue  = issue_type and issue_type != "good_position"
         is_good   = issue_type == "good_position"
@@ -240,14 +451,60 @@ def annotate_frame(frame_path: Path, players: list[dict], out_path: Path):
             [cx - r, cy - r, cx + r, cy + r],
             outline=ring_color + (230,), width=3
         )
-        # 球员编号标签
+        # 球员编号标签（直接在圆圈旁绘制，保留多球员支持）
         icon = ISSUE_ICONS.get(issue_type, "")
-        label = f"{pid}" + (f" {icon}" if icon else "")
-        draw_label(draw, label, cx, cy, bg=lbg + (210,), fg=COLOR["label_fg"], font=font_label)
+        label_text = f"{pid}" + (f" {icon}" if icon else "")
+        # draw inline label above circle
+        font_lbl = get_font(18)
+        bbox = draw.textbbox((0, 0), label_text, font=font_lbl)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = 4
+        lx0 = cx - tw // 2 - pad
+        ly0 = cy - r - th - pad * 2 - 4
+        lx1 = cx + tw // 2 + pad
+        ly1 = cy - r - 4
+        draw.rectangle([lx0, ly0, lx1, ly1], fill=lbg + (210,))
+        draw.text((lx0 + pad, ly0 + pad), label_text, font=font_lbl, fill=COLOR["label_fg"])
 
-        # 问题说明文字
-        if issue_note and is_issue:
-            draw_issue_note(draw, issue_note, cx, cy, W, H, font_issue)
+        # 问题说明文字（侧边标签收集）
+        if is_issue:
+            issue_entries.append((cx, cy, ring_color, pid, ISSUE_ICONS.get(issue_type, issue_type.upper()), issue_note))
+
+    # ── Step 2: 判断标签放置方向 ──────────────────────────────────────────
+    avg_x = (player_x_sum / player_count) if player_count else W * 0.3
+    place_right = avg_x < W * 0.55
+    label_x = int(avg_x + W * 0.22) if place_right else int(avg_x - W * 0.22)
+    label_x = max(10, min(label_x, W - 220))
+
+    # ── Step 3: 画箭头（最先画，在最底层）──────────────────────────────────
+    for arrow in arrows:
+        try:
+            draw_arrow(draw, arrow, W, H, font_main)
+        except Exception:
+            pass
+
+    # ── Step 4: 侧边问题标签 ─────────────────────────────────────────────
+    label_y = max(30, int(H * 0.08))
+    label_gap = 10
+
+    for (cx, cy, dot_col, pname, tag, note) in issue_entries:
+        anchor_x = label_x if place_right else label_x + 200
+        anchor_y = label_y + 16
+
+        mid_x = (cx + anchor_x) // 2
+        draw.line([(cx, cy), (mid_x, cy)],       fill=(0,0,0,120),     width=3)
+        draw.line([(cx, cy), (mid_x, cy)],       fill=dot_col+(180,),  width=2)
+        draw.line([(mid_x, cy), (anchor_x, anchor_y)], fill=(0,0,0,120),     width=3)
+        draw.line([(mid_x, cy), (anchor_x, anchor_y)], fill=dot_col+(180,),  width=2)
+
+        short_note = textwrap.shorten(note, width=28, placeholder="…") if note else ""
+        bw, bh = _label_box(
+            draw, label_x, label_y,
+            f"{pname}: {tag}", short_note,
+            dot_col, font_main, font_sub,
+            align_right=not place_right,
+        )
+        label_y += bh + label_gap
 
     # 合并到原图
     combined = Image.alpha_composite(img, overlay).convert("RGB")
@@ -294,7 +551,6 @@ def generate_report(data: dict, annotated_frames: dict[str, Path]) -> str:
         img_path = annotated_frames[fn]
         finfo = frame_data.get(fn, {})
         summary = finfo.get("frame_summary", "")
-        rel_path = img_path.relative_to(Path("output"))
         lines += [
             f"### Frame {fn}",
             f"",
@@ -374,18 +630,16 @@ def main():
     print("  → GPT-4o 分析完成")
 
     # ── 生成标注图片 ──────────────────────────────────────────────────────────
-    frame_data = data.get("frames", {})
     annotated_map: dict[str, Path] = {}
 
     print("生成标注图片...")
     for i, frame_path in enumerate(frame_files, 1):
-        fn_key = str(i)
-        finfo  = frame_data.get(fn_key, {})
-        players = finfo.get("players", [])
-
+        fn_key   = str(i)
+        finfo    = data.get("frames", {}).get(fn_key, {})
         out_path = ANNOTATED_DIR / frame_path.name
-        annotate_frame(frame_path, players, out_path)
+        annotate_frame(frame_path, finfo, out_path)
         annotated_map[fn_key] = out_path
+        players = finfo.get("players", [])
         print(f"  → Frame {i:02d} 标注完成（{len(players)} 名球员）")
 
     # ── 生成报告 ──────────────────────────────────────────────────────────────
